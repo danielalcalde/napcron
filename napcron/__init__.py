@@ -224,7 +224,18 @@ def load_yaml(path: str) -> Dict[str, List[Dict[str, List[str]]]]:
     normalized: Dict[str, List[Dict[str, List[str]]]] = {}
     for key, val in (data or {}).items():
         freq = str(key).lower()
-        if freq not in FREQS or not isinstance(val, list):
+        if freq not in FREQS:
+            print(
+                f"WARNING: ignoring unsupported frequency '{key}' in {path}. "
+                f"Supported: {', '.join(sorted(FREQS))}",
+                file=sys.stderr,
+            )
+            continue
+        if not isinstance(val, list):
+            print(
+                f"WARNING: ignoring jobs under '{key}' in {path}: expected a list.",
+                file=sys.stderr,
+            )
             continue
         jobs: List[Dict[str, List[str]]] = []
         for item in val:

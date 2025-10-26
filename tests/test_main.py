@@ -20,6 +20,42 @@ def write_config(tmp_path, contents: str):
     return path
 
 
+def test_load_yaml_warns_for_unknown_frequency(tmp_path, capsys):
+    cfg = write_config(
+        tmp_path,
+        """
+        montly:
+          - echo never_runs
+        daily:
+          - echo ok
+        """,
+    )
+
+    data = napcron.load_yaml(str(cfg))
+    assert "montly" not in data
+    assert "daily" in data
+
+    err = capsys.readouterr().err
+    assert "unsupported frequency" in err
+    assert "montly" in err
+
+
+def test_load_yaml_warns_for_non_list_jobs(tmp_path, capsys):
+    cfg = write_config(
+        tmp_path,
+        """
+        daily:
+          echo missing_list
+        """,
+    )
+
+    data = napcron.load_yaml(str(cfg))
+    assert data == {}
+
+    err = capsys.readouterr().err
+    assert "expected a list" in err
+
+
 def run_main(monkeypatch, args):
     monkeypatch.setattr(sys, "argv", ["napcron.py", *args])
     with pytest.raises(SystemExit) as exc:
