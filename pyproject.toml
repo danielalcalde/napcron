@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "napcron"
+version = "0.1.0"
+description = "Tiny, parallel, poor-man's anacron with requirements."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "alcalde"}
+]
+dependencies = [
+  "PyYAML>=6.0"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: System :: Archiving :: Backup",
+  "Topic :: Utilities"
+]
+
+[project.urls]
+Homepage = "https://github.com/alcalde/napcron"
+Repository = "https://github.com/alcalde/napcron"
+
+[project.scripts]
+napcron = "napcron:main"

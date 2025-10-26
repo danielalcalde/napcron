@@ -1,0 +1,6 @@
+*.log
+*.pyc
+.coverage
+coverage.xml
+__pycache__
+.pytest_cache
