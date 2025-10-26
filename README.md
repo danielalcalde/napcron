@@ -10,18 +10,8 @@ Unlike `anacron`, it is easy to configure
 
 ## Installation
 
-### From PyPI
-
 ```bash
 python -m pip install --upgrade napcron
-```
-
-### From source (local checkout)
-
-```bash
-git clone https://github.com/alcalde/napcron.git
-cd napcron
-python -m pip install .
 ```
 
 ---
@@ -29,9 +19,7 @@ python -m pip install .
 ## Usage
 
 `napcron` is designed to be executed once per hour via `cron`, `systemd`, or any scheduler.
-It reads a YAML configuration file, checks which tasks are due, evaluates their requirements, and executes them in parallel. If you do not provide
-an explicit config path, `napcron` defaults to `~/.napcron.yaml`, creating the file automatically (with the minimal contents `daily:`) the first
-time you run it.
+It reads a YAML configuration file, checks which tasks are due, evaluates their requirements, and executes them in parallel.
 
 ### Cron job example
 
@@ -45,10 +33,7 @@ Edit your user crontab (`crontab -e`):
 
 ## Configuration
 
-The default config file lives at `~/.napcron.yaml`; if it doesn't exist yet, running `napcron` once will create it with just:
-
-```yaml
-daily:
+The default config file lives at `~/.napcron.yaml`; if it doesn't exist yet, running `napcron` once will create it.
 ```
 
 From there you can extend it. Example `/home/user/.napcron.yaml`:
@@ -62,7 +47,6 @@ daily:
       - internet
   - python $HOME/a.py: internet
   - ~/just_run_me.sh
-  - ./also_okay:
 
 weekly:
   - /cleanup_logs.sh: [internet, ac_power, rerun_onfail]
@@ -131,11 +115,14 @@ daily:
       - rerun_onfail
 ```
 
-### Retry behavior
+## Command-line Options
 
-By default, napcron records when a task last attempted to run. If the most recent attempt failed, the job waits for its configured interval before it becomes eligible again. This prevents a broken command from running on every invocation.
-
-To opt into the legacy behavior where failed jobs retry immediately until they succeed, add the `rerun_onfail` flag to the task's requirements list.
+| Option            | Description                                                                  |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `--dry-run`       | Show which jobs would run, without executing or modifying state              |
+| `--verbose`, `-v` | Print detailed logs                                                          |
+| `--state PATH`    | Use a custom path for the JSON state file                                    |
+| `--max-workers N` | Limit the number of parallel jobs (default: number of due tasks, maximum 32) |
 
 ---
 
@@ -163,16 +150,5 @@ Example:
   }
 }
 ```
-
----
-
-## Command-line Options
-
-| Option            | Description                                                                  |
-| ----------------- | ---------------------------------------------------------------------------- |
-| `--dry-run`       | Show which jobs would run, without executing or modifying state              |
-| `--verbose`, `-v` | Print detailed logs                                                          |
-| `--state PATH`    | Use a custom path for the JSON state file                                    |
-| `--max-workers N` | Limit the number of parallel jobs (default: number of due tasks, maximum 32) |
 
 ---
