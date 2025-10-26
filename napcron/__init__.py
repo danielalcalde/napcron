@@ -19,11 +19,13 @@ Run hourly via cron. Only runs tasks that are *due* (daily/weekly/monthly) and w
 requirements pass.
 
 Usage:
-  napcron.py /path/to/tasks.yaml
+  napcron.py [config]
              [--state /path/to/state.json]
              [--dry-run]
              [--verbose|-v]
              [--max-workers N]
+
+When no config path is provided, ~/.napcron.yaml is used and created automatically if missing.
 """
 
 from __future__ import annotations
@@ -42,10 +44,32 @@ from typing import Dict, List, Tuple, Optional
 
 # ------------------------- Frequencies -------------------------
 FREQS: Dict[str, timedelta] = {
+    "hourly": timedelta(hours=1),
     "daily": timedelta(days=1),
     "weekly": timedelta(days=7),
     "monthly": timedelta(days=30),  # anacron-like cadence
 }
+
+DEFAULT_CONFIG_BASENAME = ".napcron.yaml"
+DEFAULT_CONFIG_TEMPLATE = "daily:\n"
+
+# ------------------------- Config helpers ----------------------
+def default_config_path() -> str:
+    return os.path.abspath(os.path.join(os.path.expanduser("~"), DEFAULT_CONFIG_BASENAME))
+
+
+def ensure_config_file(path: str, contents: str = DEFAULT_CONFIG_TEMPLATE) -> None:
+    if os.path.exists(path):
+        return
+    parent = os.path.dirname(path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(contents)
+    except OSError as exc:
+        print(f"Unable to create default config at {path}: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 # ------------------------- Time helpers ------------------------
 def now_utc() -> datetime:
@@ -159,12 +183,17 @@ def req_ac_power(_: str) -> bool:
 
 def req_battery(_: str) -> bool:
     """Stub; always True. Replace with a real threshold check if needed."""
-    return True
+    return not req_ac_power(_)
 
 REQUIREMENTS = {
     "internet": req_internet,
     "ac_power": req_ac_power,
     "battery": req_battery,
+}
+
+# Requirement-like flags that toggle behavior but should not be treated as predicates.
+SPECIAL_REQUIREMENT_FLAGS = {
+    "rerun_onfail",  # opt-in to legacy "retry failed tasks immediately" logic
 }
 
 # ------------------------- YAML parsing ------------------------
@@ -276,19 +305,25 @@ def run_command(cmd: str, verbose: bool, dry_run: bool) -> int:
         print(f"[{ts}] RUN: {cmd}{' (dry-run)' if dry_run else ''}")
     if dry_run:
         return 0
-    return subprocess.run(cmd, shell=True).returncode
+    stdout = None if verbose else subprocess.DEVNULL
+    stderr = None if verbose else subprocess.DEVNULL
+    return subprocess.run(cmd, shell=True, stdout=stdout, stderr=stderr).returncode
 
 # ------------------------- Main --------------------------------
 def main() -> None:
+    default_cfg = default_config_path()
     ap = argparse.ArgumentParser()
-    ap.add_argument("config", help="Path to YAML config file")
+    ap.add_argument("config", nargs="?", help=f"Path to YAML config file (default: {default_cfg})")
     ap.add_argument("--state", help="Path to JSON state file (optional)")
     ap.add_argument("--dry-run", action="store_true", help="Print what would run; do NOT change state")
     ap.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     ap.add_argument("--max-workers", type=int, default=0, help="Max parallel jobs (default: #due tasks, cap 32)")
     args = ap.parse_args()
 
-    cfg_path = os.path.abspath(args.config)
+    cfg_arg = args.config or default_cfg
+    cfg_path = os.path.abspath(os.path.expanduser(cfg_arg))
+    if args.config is None:
+        ensure_config_file(cfg_path)
     if not os.path.exists(cfg_path):
         print(f"Config not found: {cfg_path}", file=sys.stderr)
         sys.exit(1)
@@ -317,7 +352,10 @@ def main() -> None:
         for freq, jobs in config.items():
             for job in jobs:
                 cmd = job["cmd"]
-                reqs = job.get("requires", [])
+                reqs_all = job.get("requires", []) or []
+                flags = {r for r in reqs_all if r in SPECIAL_REQUIREMENT_FLAGS}
+                reqs = [r for r in reqs_all if r not in SPECIAL_REQUIREMENT_FLAGS]
+                rerun_onfail = "rerun_onfail" in flags
                 task_id = f"{freq}::{cmd}"
 
                 entry = tasks_state.setdefault(task_id, {
@@ -331,7 +369,15 @@ def main() -> None:
                 entry["frequency"] = freq
                 entry["cmd"] = cmd
 
-                if not is_due(entry["last_success"], freq):
+                last_success_iso = entry.get("last_success")
+                last_attempt_iso = entry.get("last_attempt")
+                last_status = entry.get("last_status")
+
+                ref_time = last_success_iso
+                if not rerun_onfail and last_status not in (None, 0):
+                    ref_time = last_attempt_iso or last_success_iso
+
+                if not is_due(ref_time, freq):
                     if args.verbose:
                         print(f"SKIP (not due): [{freq}] {cmd}")
                     continue

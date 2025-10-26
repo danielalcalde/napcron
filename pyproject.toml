@@ -25,8 +25,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/alcalde/napcron"
-Repository = "https://github.com/alcalde/napcron"
+Homepage = "https://github.com/danielalcalde/napcron"
+Repository = "https://github.com/danielalcalde/napcron"
 
 [project.scripts]
 napcron = "napcron:main"

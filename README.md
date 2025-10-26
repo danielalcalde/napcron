@@ -1,7 +1,7 @@
 # napcron
 
 **napcron** is a small, Python-based, parallel replacement for `anacron`.
-It ensures periodic jobs (daily, weekly, monthly, etc.) still run even if the system was powered off, suspended, or offline when they were scheduled.
+It ensures periodic jobs (hourly, daily, weekly, monthly, etc.) still run even if the system was powered off, suspended, or offline when they were scheduled.
 
 Unlike `cron`, it records when tasks last succeeded and executes only those that are due.
 Unlike `anacron`, it is easy to configure
@@ -24,30 +24,39 @@ cd napcron
 python -m pip install .
 ```
 
-The `napcron` CLI becomes available on your `PATH` after installation.
-
 ---
 
 ## Usage
 
 `napcron` is designed to be executed once per hour via `cron`, `systemd`, or any scheduler.
-It reads a YAML configuration file, checks which tasks are due, evaluates their requirements, and executes them in parallel.
+It reads a YAML configuration file, checks which tasks are due, evaluates their requirements, and executes them in parallel. If you do not provide
+an explicit config path, `napcron` defaults to `~/.napcron.yaml`, creating the file automatically (with the minimal contents `daily:`) the first
+time you run it.
 
 ### Cron job example
 
 Edit your user crontab (`crontab -e`):
 
 ```cron
-@hourly napcron /home/user/.napcron.yaml
+@hourly napcron  # uses ~/.napcron.yaml by default
 ```
 
 ---
 
 ## Configuration
 
-Example `/home/user/.napcron.yaml`:
+The default config file lives at `~/.napcron.yaml`; if it doesn't exist yet, running `napcron` once will create it with just:
 
 ```yaml
+daily:
+```
+
+From there you can extend it. Example `/home/user/.napcron.yaml`:
+
+```yaml
+hourly:
+  - /usr/local/bin/refresh-cache.sh
+
 daily:
   - bash /home/user/a.sh:
       - internet
@@ -56,7 +65,7 @@ daily:
   - ./also_okay:
 
 weekly:
-  - /cleanup_logs.sh: [internet, ac_power]
+  - /cleanup_logs.sh: [internet, ac_power, rerun_onfail]
 
 monthly:
   - python ~/rotate_backups.py
@@ -64,37 +73,29 @@ monthly:
 
 ### Explanation
 
-| Frequency | Description                                     | Interval |
-| --------- | ----------------------------------------------- | -------- |
-| `daily`   | Runs once every 24 hours since the last success | 1 day    |
-| `weekly`  | Runs once every 7 days since the last success   | 7 days   |
-| `monthly` | Runs once every 30 days                         | 30 days  |
+| Frequency | Description                                                                      | Interval |
+| --------- | -------------------------------------------------------------------------------- | -------- |
+| `hourly`  | Runs once every hour; failed runs wait an hour unless `rerun_onfail` is present  | 1 hour   |
+| `daily`   | Runs once every 24 hours; failed runs wait a day unless `rerun_onfail` is present | 1 day    |
+| `weekly`  | Runs once every 7 days; failed runs wait a week unless `rerun_onfail` is present | 7 days   |
+| `monthly` | Runs once every 30 days                                                          | 30 days  |
 
 ---
 
 ## Features
 
-* Runs missed periodic jobs (daily, weekly, monthly)
+* Runs missed periodic jobs (hourly, daily, weekly, monthly)
 * Executes due tasks in parallel
 * Supports configurable requirements:
 
   * `internet` – verify network connectivity
   * `ac_power` – ensure external power is connected
-  * `battery` – placeholder for custom checks
+  * `battery` – only runs when on battery
+  * `rerun_onfail` – retry failed jobs immediately instead of waiting for the next interval
 * Simple YAML configuration
 * Persistent state tracking in `~/.local/state/napcron/`
 * Atomic file lock to prevent overlapping runs
 * Safe dry-run mode (`--dry-run`)
-* Only dependency: [PyYAML](https://pyyaml.org)
-
-**Accepted YAML formats for each job:**
-
-```yaml
-- "cmd"                # No requirements
-- cmd:                 # No requirements (no [] needed)
-- cmd: internet        # Single requirement
-- cmd: [internet, ac_power]  # Multiple requirements
-```
 
 ---
 
@@ -105,9 +106,10 @@ napcron provides the following built-in checks:
 
 | Requirement | Description                                                                              | Platforms               |
 | ----------- | ---------------------------------------------------------------------------------------- | ----------------------- |
-| `internet`  | Checks for network connectivity by opening a TCP connection to 1.1.1.1:443 or 8.8.8.8:53 | All                     |
-| `ac_power`  | Returns true if the system is running on external power (Linux, macOS, Windows)          | Linux / macOS / Windows |
-| `battery`   | Placeholder requirement, always returns True                                             | All                     |
+| `internet`     | Checks for network connectivity by opening a TCP connection to 1.1.1.1:443 or 8.8.8.8:53 | All                     |
+| `ac_power`     | Returns true if the system is running on external power                                  | Linux / macOS / Windows |
+| `battery`      | not ac_power                                                                             | Linux / macOS / Windows |
+| `rerun_onfail` | Immediately retries a task on the next napcron invocation after a non-zero exit          | All                     |
 
 Custom requirement checks can easily be added by extending the `REQUIREMENTS` dictionary in `napcron.py`.
 
@@ -125,7 +127,15 @@ Used in YAML:
 ```yaml
 daily:
   - python train.py: gpu
+  - python flaky.py:
+      - rerun_onfail
 ```
+
+### Retry behavior
+
+By default, napcron records when a task last attempted to run. If the most recent attempt failed, the job waits for its configured interval before it becomes eligible again. This prevents a broken command from running on every invocation.
+
+To opt into the legacy behavior where failed jobs retry immediately until they succeed, add the `rerun_onfail` flag to the task's requirements list.
 
 ---
 
