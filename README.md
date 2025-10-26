@@ -4,14 +4,14 @@
 It ensures periodic jobs (hourly, daily, weekly, monthly, etc.) still run even if the system was powered off, suspended, or offline when they were scheduled.
 
 Unlike `cron`, it records when tasks last succeeded and executes only those that are due.
-Unlike `anacron`, it is easy to configure
+Unlike `anacron`, it is easy to configure.
 
 ---
 
 ## Installation
 
 ```bash
-python -m pip install --upgrade napcron
+pip install napcron
 ```
 
 ---

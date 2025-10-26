@@ -279,3 +279,47 @@ def test_rerun_onfail_flag_allows_immediate_retry(tmp_path, monkeypatch):
     entry = saved["tasks"]["daily::echo keep_trying"]
     assert entry["last_status"] == 0
     assert entry["last_success"] is not None
+
+
+def test_dry_run_does_not_write_state(tmp_path, monkeypatch):
+    config = write_config(
+        tmp_path,
+        """
+        daily:
+          - echo noop
+        """,
+    )
+    state = tmp_path / "state.json"
+    calls = []
+
+    def fake_run(cmd, verbose, dry_run):
+        calls.append((cmd, verbose, dry_run))
+        return 0
+
+    monkeypatch.setattr(napcron, "run_command", fake_run)
+    exit_code = run_main(monkeypatch, [str(config), "--state", str(state), "--dry-run", "--max-workers", "1"])
+    assert exit_code == 0
+    assert calls == [("echo noop", False, True)]
+    assert not state.exists()
+
+
+def test_custom_state_path_parent_created(tmp_path, monkeypatch):
+    config = write_config(
+        tmp_path,
+        """
+        daily:
+          - echo with_state_dir
+        """,
+    )
+    state = tmp_path / "nested" / "dir" / "state.json"
+    calls = []
+
+    def fake_run(cmd, verbose, dry_run):
+        calls.append((cmd, verbose, dry_run))
+        return 0
+
+    monkeypatch.setattr(napcron, "run_command", fake_run)
+    exit_code = run_main(monkeypatch, [str(config), "--state", str(state), "--max-workers", "1"])
+    assert exit_code == 0
+    assert calls == [("echo with_state_dir", False, False)]
+    assert state.exists()

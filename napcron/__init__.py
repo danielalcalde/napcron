@@ -169,21 +169,26 @@ def _windows_ac_online() -> Optional[bool]:
     except Exception:
         return None
 
+def _ac_power_status() -> Optional[bool]:
+    """Best-effort detection of AC power. Returns True, False or None if unknown."""
+    if sys.platform.startswith("linux"):
+        return _linux_ac_online()
+    if sys.platform == "darwin":
+        return _macos_ac_online()
+    if sys.platform.startswith("win"):
+        return _windows_ac_online()
+    return None
+
 def req_ac_power(_: str) -> bool:
     """True when system is on external/AC power. If unknown, return False."""
-    if sys.platform.startswith("linux"):
-        res = _linux_ac_online()
-    elif sys.platform == "darwin":
-        res = _macos_ac_online()
-    elif sys.platform.startswith("win"):
-        res = _windows_ac_online()
-    else:
-        res = None
-    return bool(res) if res is not None else False
+    return _ac_power_status() is True
 
 def req_battery(_: str) -> bool:
-    """Stub; always True. Replace with a real threshold check if needed."""
-    return not req_ac_power(_)
+    """True when AC power is explicitly reported as absent."""
+    status = _ac_power_status()
+    if status is None:
+        return False
+    return status is False
 
 REQUIREMENTS = {
     "internet": req_internet,
@@ -328,7 +333,11 @@ def main() -> None:
         print(f"Config not found: {cfg_path}", file=sys.stderr)
         sys.exit(1)
 
-    state_path = os.path.abspath(args.state) if args.state else default_state_path(cfg_path)
+    state_arg = os.path.expanduser(args.state) if args.state else default_state_path(cfg_path)
+    state_path = os.path.abspath(state_arg)
+    state_parent = os.path.dirname(state_path)
+    if state_parent and not os.path.isdir(state_parent):
+        os.makedirs(state_parent, exist_ok=True)
     lock_path = acquire_lock(state_path)
     if lock_path is None:
         if args.verbose:
@@ -408,7 +417,8 @@ def main() -> None:
             print(f"Due tasks: {len(due)}")
 
         if not due:
-            save_state(state_path, state)
+            if not args.dry_run:
+                save_state(state_path, state)
             sys.exit(0)
 
         max_workers = args.max_workers if args.max_workers > 0 else min(32, len(due))
@@ -447,7 +457,8 @@ def main() -> None:
                     e = tasks_state[task_id]
                     print(f"DRY-RUN (would run) [{e['frequency']}]: {e['cmd']} (planned_start={started})")
 
-        save_state(state_path, state)
+        if not args.dry_run:
+            save_state(state_path, state)
         sys.exit(exit_code)
 
     finally:
