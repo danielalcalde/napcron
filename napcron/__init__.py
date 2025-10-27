@@ -41,7 +41,7 @@ import sys
 import time
 from pprint import pprint
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Union
 
 # ------------------------- Frequencies -------------------------
 FREQS: Dict[str, timedelta] = {
@@ -174,9 +174,9 @@ def _ac_power_status() -> Optional[bool]:
     """Best-effort detection of AC power. Returns True, False or None if unknown."""
     if sys.platform.startswith("linux"):
         return _linux_ac_online()
-    if sys.platform == "darwin":
+    elif sys.platform == "darwin":
         return _macos_ac_online()
-    if sys.platform.startswith("win"):
+    elif sys.platform.startswith("win"):
         return _windows_ac_online()
     return None
 
@@ -368,7 +368,7 @@ def main() -> None:
         tasks_state: Dict[str, Dict] = state.setdefault("tasks", {})
 
         # Build list of due tasks (dedup by task_id = "freq::cmd")
-        due: List[Tuple[str, str]] = []  # (task_id, cmd)
+        due: List[Tuple[str, str, bool]] = []  # (task_id, cmd, rerun_onfail)
         seen = set()
 
         for freq, jobs in config.items():
@@ -424,7 +424,7 @@ def main() -> None:
 
                 if task_id not in seen:
                     seen.add(task_id)
-                    due.append((task_id, cmd))
+                    due.append((task_id, cmd, rerun_onfail))
 
         if args.verbose:
             print(f"Due tasks: {len(due)}")
@@ -434,41 +434,60 @@ def main() -> None:
                 save_state(state_path, state)
             sys.exit(0)
 
+        due.sort(key=lambda item: item[2])  # launch non-rerun tasks first
+
         max_workers = args.max_workers if args.max_workers > 0 else min(32, len(due))
 
         # Workers only report; main thread mutates state
-        def _job(task_id: str, cmd: str) -> Tuple[str, int, str, str]:
+        def _job(task_id: str, cmd: str, rerun_onfail: bool) -> Tuple[str, Union[int, str], str, Optional[str], bool, Optional[str]]:
             started = iso(now_utc()) or ""
-            rc = run_command(cmd, verbose=args.verbose, dry_run=args.dry_run)
-            finished = iso(now_utc()) or ""
-            return (task_id, rc, started, finished)
+            if rerun_onfail:
+                rc = run_command(cmd, verbose=args.verbose, dry_run=args.dry_run)
+                finished = iso(now_utc()) or ""
+                note = f"finished_at={finished}"
+                return (task_id, rc, started, finished, rerun_onfail, note)
+            if args.dry_run:
+                return (task_id, "?", started, None, rerun_onfail, "dry-run (not started)")
+            proc = subprocess.Popen(cmd, shell=True, start_new_session=True)
+            note = f"in-progress pid={proc.pid}"
+            return (task_id, "?", started, None, rerun_onfail, note)
 
-        results: List[Tuple[str, int, str, str]] = []
+        results: List[Tuple[str, Union[int, str], str, Optional[str], bool, Optional[str]]] = []
         with cf.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_job, tid, cmd) for (tid, cmd) in due]
+            futures = [pool.submit(_job, tid, cmd, rerun_onfail) for (tid, cmd, rerun_onfail) in due]
             for fut in cf.as_completed(futures):
                 results.append(fut.result())
 
         # Apply results (no state writes on dry-run)
         exit_code = 0
         if not args.dry_run:
-            for (task_id, rc, started, finished) in results:
+            for (task_id, rc, started, finished, rerun_onfail, note) in results:
                 e = tasks_state[task_id]
                 e["last_attempt"] = started
-                e["last_status"] = int(rc)
-                e["last_note"] = f"finished_at={finished}"
-                if rc == 0:
-                    e["last_success"] = finished
+                if isinstance(rc, int):
+                    e["last_status"] = rc
+                    e["last_note"] = note or ""
+                    if rc == 0:
+                        e["last_success"] = finished
+                    else:
+                        if exit_code == 0:
+                            exit_code = rc
+                    if args.verbose:
+                        status_repr = "OK" if rc == 0 else f"FAIL({rc})"
+                        print(f"DONE [{e['frequency']}]: {e['cmd']} -> {status_repr}")
                 else:
-                    if exit_code == 0:
-                        exit_code = rc
-                if args.verbose:
-                    print(f"DONE [{e['frequency']}]: {e['cmd']} -> {'OK' if rc == 0 else f'FAIL('+str(rc)+')'}")
+                    e["last_status"] = rc
+                    e["last_note"] = note or ""
+                    if args.verbose:
+                        print(f"LAUNCHED [{e['frequency']}]: {e['cmd']} -> {note}")
         else:
             if args.verbose:
-                for (task_id, _, started, _) in results:
+                for (task_id, rc, started, finished, _, note) in results:
                     e = tasks_state[task_id]
-                    print(f"DRY-RUN (would run) [{e['frequency']}]: {e['cmd']} (planned_start={started})")
+                    if isinstance(rc, int):
+                        print(f"DRY-RUN (would run) [{e['frequency']}]: {e['cmd']} (planned_start={started})")
+                    else:
+                        print(f"DRY-RUN (would launch) [{e['frequency']}]: {e['cmd']} (planned_start={started})")
 
         if not args.dry_run:
             save_state(state_path, state)

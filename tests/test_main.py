@@ -118,7 +118,7 @@ def test_main_uses_default_config_when_missing(tmp_path, monkeypatch):
     assert default_cfg.exists()
     assert default_cfg.read_text() == "daily:\n"
 
-    state_path = home / ".local" / "state" / "napcron" / ".napcron.state.json"
+    state_path = Path(napcron.default_state_path(str(default_cfg)))
     assert state_path.exists()
 
 
@@ -131,24 +131,34 @@ def test_main_runs_due_task_updates_state(tmp_path, monkeypatch):
         """,
     )
     state = tmp_path / "state.json"
-    calls = []
 
-    def fake_run(cmd, verbose, dry_run):
-        calls.append((cmd, verbose, dry_run))
-        return 0
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("run_command should not be invoked for async tasks")
 
-    monkeypatch.setattr(napcron, "run_command", fake_run)
+    popen_calls = []
+
+    class DummyProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+    def fake_popen(cmd, **kwargs):
+        popen_calls.append((cmd, kwargs))
+        return DummyProc(12345)
+
+    monkeypatch.setattr(napcron, "run_command", fail_if_called)
+    monkeypatch.setattr(napcron.subprocess, "Popen", fake_popen)
     exit_code = run_main(monkeypatch, [str(config), "--state", str(state), "--max-workers", "1"])
     assert exit_code == 0
-    assert calls == [("echo task1", False, False)]
+    assert popen_calls == [("echo task1", {"shell": True, "start_new_session": True})]
 
     saved = json.loads(state.read_text())
     task_id = "daily::echo task1"
     assert task_id in saved["tasks"]
     entry = saved["tasks"][task_id]
-    assert entry["last_status"] == 0
-    assert entry["last_success"]
-    assert entry["last_note"].startswith("finished_at=")
+    assert entry["last_status"] == "?"
+    assert entry["last_success"] is None
+    assert entry["last_note"] == "in-progress pid=12345"
+    assert entry["last_attempt"]
 
 
 def test_main_skips_task_when_not_due(tmp_path, monkeypatch):
@@ -326,16 +336,14 @@ def test_dry_run_does_not_write_state(tmp_path, monkeypatch):
         """,
     )
     state = tmp_path / "state.json"
-    calls = []
 
-    def fake_run(cmd, verbose, dry_run):
-        calls.append((cmd, verbose, dry_run))
-        return 0
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("No commands should be launched during dry-run")
 
-    monkeypatch.setattr(napcron, "run_command", fake_run)
+    monkeypatch.setattr(napcron, "run_command", fail_if_called)
+    monkeypatch.setattr(napcron.subprocess, "Popen", fail_if_called)
     exit_code = run_main(monkeypatch, [str(config), "--state", str(state), "--dry-run", "--max-workers", "1"])
     assert exit_code == 0
-    assert calls == [("echo noop", False, True)]
     assert not state.exists()
 
 
@@ -348,14 +356,23 @@ def test_custom_state_path_parent_created(tmp_path, monkeypatch):
         """,
     )
     state = tmp_path / "nested" / "dir" / "state.json"
-    calls = []
 
-    def fake_run(cmd, verbose, dry_run):
-        calls.append((cmd, verbose, dry_run))
-        return 0
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("run_command should not be invoked for async tasks")
 
-    monkeypatch.setattr(napcron, "run_command", fake_run)
+    popen_calls = []
+
+    class DummyProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+    def fake_popen(cmd, **kwargs):
+        popen_calls.append((cmd, kwargs))
+        return DummyProc(6789)
+
+    monkeypatch.setattr(napcron, "run_command", fail_if_called)
+    monkeypatch.setattr(napcron.subprocess, "Popen", fake_popen)
     exit_code = run_main(monkeypatch, [str(config), "--state", str(state), "--max-workers", "1"])
     assert exit_code == 0
-    assert calls == [("echo with_state_dir", False, False)]
+    assert popen_calls == [("echo with_state_dir", {"shell": True, "start_new_session": True})]
     assert state.exists()
