@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import os
 import socket
@@ -260,9 +261,10 @@ def load_yaml(path: str) -> Dict[str, List[Dict[str, List[str]]]]:
 # ------------------------- State I/O ---------------------------
 def default_state_path(config_path: str) -> str:
     base = os.path.splitext(os.path.basename(config_path))[0]
+    hash_suffix = hashlib.sha1(config_path.encode("utf-8")).hexdigest()[:5]
     state_dir = os.path.join(os.path.expanduser("~"), ".local", "state", "napcron")
     os.makedirs(state_dir, exist_ok=True)
-    return os.path.join(state_dir, f"{base}.state.json")
+    return os.path.join(state_dir, f"{base}_{hash_suffix}.state.json")
 
 def load_state(path: str) -> Dict:
     if not os.path.exists(path):
